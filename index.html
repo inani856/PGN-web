@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobile Analyzer | RUII</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+    <style>
+        body { background: #000; color: #fff; font-family: system-ui, -apple-system, sans-serif; overflow-x: hidden; }
+        .glass { background: #111; border: 1px solid #222; border-radius: 20px; }
+        .btn-active { background: linear-gradient(90deg, #2563eb, #7c3aed); }
+        /* Animasi loading kecil */
+        .dot-loader { animation: blink 1s infinite; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    </style>
+</head>
+<body class="p-4">
+
+    <header class="flex justify-between items-center mb-6">
+        <h1 class="text-xl font-black italic tracking-tighter">RUII <span class="text-blue-500">M-SCAN</span></h1>
+        <div id="engineStatus" class="text-[10px] font-bold px-3 py-1 rounded-full bg-red-900/30 text-red-500 border border-red-500/30">
+            ENGINE LOADING...
+        </div>
+    </header>
+
+    <div class="glass p-6 mb-4 flex justify-between items-center">
+        <div>
+            <p class="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Accuracy Score</p>
+            <h2 id="accVal" class="text-5xl font-black italic">0%</h2>
+        </div>
+        <div class="text-right">
+            <p id="verdict" class="text-[10px] font-bold text-gray-400 uppercase">Idle</p>
+            <div id="progress" class="text-blue-500 font-mono text-sm font-bold">0/0</div>
+        </div>
+    </div>
+
+    <div class="space-y-3 mb-6">
+        <input type="file" id="pgnInput" accept=".pgn" class="hidden">
+        <button onclick="document.getElementById('pgnInput').click()" class="w-full btn-active py-4 rounded-2xl font-black text-sm uppercase tracking-widest shadow-lg active:scale-95 transition-transform">
+            Upload File PGN
+        </button>
+        <p id="fileName" class="text-center text-[10px] text-gray-500 italic">Format file harus .pgn</p>
+    </div>
+
+    <div class="glass flex flex-col h-[350px] overflow-hidden">
+        <div class="p-4 border-b border-white/5 bg-white/5 flex justify-between items-center">
+            <span class="text-[10px] font-bold uppercase tracking-widest text-gray-400">Analysis Result</span>
+            <span id="speed" class="text-[9px] text-gray-600 font-mono italic">Stockfish v10 Lite</span>
+        </div>
+        <div id="log" class="overflow-y-auto flex-grow p-4 space-y-3">
+            <p id="placeholder" class="text-center text-xs text-gray-600 mt-10 italic">Belum ada data dianalisis.</p>
+        </div>
+    </div>
+
+    <footer class="mt-8 text-center opacity-30 text-[9px] font-black tracking-[0.4em]">
+        RUII-X081 @2026 | MOBILE_VER
+    </footer>
+
+    <script>
+        // Setup Engine
+        const stockfish = new Worker("https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js");
+        let engineReady = false;
+
+        stockfish.postMessage("uci");
+        stockfish.onmessage = (e) => {
+            if (e.data === "uciok") {
+                engineReady = true;
+                const st = document.getElementById('engineStatus');
+                st.innerText = "ENGINE READY";
+                st.classList.replace('text-red-500', 'text-green-500');
+                st.classList.replace('bg-red-900/30', 'bg-green-900/30');
+            }
+        };
+
+        document.getElementById('pgnInput').onchange = async (e) => {
+            if(!engineReady) return alert("Tunggu engine siap!");
+            const file = e.target.files[0];
+            if(!file) return;
+
+            document.getElementById('fileName').innerText = file.name;
+            document.getElementById('placeholder').style.display = 'none';
+            
+            const text = await file.text();
+            const chess = new Chess();
+            if(!chess.load_pgn(text)) return alert("File PGN Rusak!");
+
+            const moves = chess.history();
+            processMoves(moves);
+        };
+
+        async function processMoves(moves) {
+            const log = document.getElementById('log');
+            log.innerHTML = "";
+            let matches = 0;
+            let tempChess = new Chess();
+
+            for (let i = 0; i < moves.length; i++) {
+                const userMove = moves[i];
+                const fen = tempChess.fen();
+                
+                document.getElementById('progress').innerText = `${i+1}/${moves.length}`;
+
+                // Minta saran engine (Depth 8 supaya HP gak panas)
+                const engineMove = await askEngine(fen);
+                const isMatch = (userMove === engineMove);
+                if (isMatch) matches++;
+
+                // Append UI
+                const item = document.createElement('div');
+                item.className = "flex justify-between items-center p-3 rounded-xl bg-white/5 border-l-2 " + (isMatch ? "border-green-500" : "border-gray-700");
+                item.innerHTML = `
+                    <div class="flex gap-3">
+                        <span class="text-gray-600 font-mono text-xs">${i+1}</span>
+                        <span class="font-bold text-sm text-white">${userMove}</span>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-[9px] block text-gray-500 uppercase">${isMatch ? 'Best Move' : 'Alternative'}</span>
+                        <span class="text-[10px] font-mono text-blue-400">${engineMove}</span>
+                    </div>
+                `;
+                log.appendChild(item);
+                log.scrollTop = log.scrollHeight;
+
+                // Update Persen
+                const currentAcc = Math.round((matches / (i+1)) * 100);
+                document.getElementById('accVal').innerText = currentAcc + "%";
+                
+                // Verdict
+                const v = document.getElementById('verdict');
+                if(currentAcc > 85) { v.innerText = "🔴 High Risk"; v.style.color = "#ef4444"; }
+                else if(currentAcc > 50) { v.innerText = "🟡 Suspicious"; v.style.color = "#eab308"; }
+                else { v.innerText = "🟢 Clean"; v.style.color = "#22c55e"; }
+
+                tempChess.move(userMove);
+            }
+        }
+
+        function askEngine(fen) {
+            return new Promise((resolve) => {
+                stockfish.postMessage(`position fen ${fen}`);
+                stockfish.postMessage("go depth 8"); // Depth 8 optimal buat HP
+                
+                const onMsg = (e) => {
+                    if (e.data.startsWith("bestmove")) {
+                        const raw = e.data.split(" ")[1];
+                        stockfish.removeEventListener("message", onMsg);
+                        
+                        const t = new Chess(fen);
+                        const m = t.move(raw, {sloppy: true});
+                        resolve(m ? m.san : raw);
+                    }
+                };
+                stockfish.addEventListener("message", onMsg);
+            });
+        }
+    </script>
+</body>
+</html>
